@@ -61,22 +61,25 @@ impl<E: Send + 'static> TryForEach<E> {
                 }
 
                 task::spawn(async move {
-                    // Execute the closure.
-                    if let Err(err) = f(item).await {
-                        // an error occured. We need to stop any consequent futures from starting
-                        // and then send an item through the stream
-                        error_occured.store(true, Ordering::SeqCst);
-                        sender.send(Some(err)).await;
-                        return;
-                    }
+                    // an error may have occured by the time the runtime executes this closure
+                    if !error_occured.load(Ordering::SeqCst) {
+                        // Execute the closure.
+                        if let Err(err) = f(item).await {
+                            // an error occured. We need to stop any consequent futures from starting
+                            // and then send an item through the stream
+                            error_occured.store(true, Ordering::SeqCst);
+                            sender.send(Some(err)).await;
+                            return;
+                        }
 
-                    // Wake up the receiver if we know we're done.
-                    ref_count.fetch_sub(1, Ordering::SeqCst);
-                    if exhausted.load(Ordering::SeqCst) && ref_count.load(Ordering::SeqCst) == 0 {
-                        // possibly, an error occured while executing this inner task. Make sure no error occured
-                        if !error_occured.load(Ordering::SeqCst) {
-                            // no errors occured at all, so push None through the channel
-                            sender.send(None).await;
+                        // Wake up the receiver if we know we're done.
+                        ref_count.fetch_sub(1, Ordering::SeqCst);
+                        if exhausted.load(Ordering::SeqCst) && ref_count.load(Ordering::SeqCst) == 0 {
+                            // possibly, an error occured while executing this inner task. Make sure no error occured
+                            if !error_occured.load(Ordering::SeqCst) {
+                                // no errors occured at all, so push None through the channel
+                                sender.send(None).await;
+                            }
                         }
                     }
                 });
@@ -122,7 +125,7 @@ async fn try_smoke_ok() {
 async fn try_smoke_err() {
     let s = async_std::stream::successors(Some(0), |val| Some(val + 1));
     let res = crate::from_stream(s)
-        .take(5)
+        .take(10)
         .try_for_each::<_, _, ()>(|n| async move {
             // TODO: assert that this is called 3 times.
             dbg!(n);
