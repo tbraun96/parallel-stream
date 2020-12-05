@@ -20,7 +20,7 @@ pin_project_lite::pin_project! {
         // Count how many tasks are executing.
         ref_count: Arc<AtomicU64>,
         // determines if an error occured
-        error_occured: Arc<AtomicBool>
+        error_occurred: Arc<AtomicBool>
     }
 }
 
@@ -34,7 +34,7 @@ impl<E: Send + 'static> TryForEach<E> {
     {
         let exhausted = Arc::new(AtomicBool::new(false));
         let ref_count = Arc::new(AtomicU64::new(0));
-        let error_occured = Arc::new(AtomicBool::new(false));
+        let error_occurred = Arc::new(AtomicBool::new(false));
         let (sender, receiver): (Sender<Option<E>>, Receiver<Option<E>>) = sync::channel(1);
         let _limit = stream.get_limit();
 
@@ -43,7 +43,7 @@ impl<E: Send + 'static> TryForEach<E> {
             receiver,
             exhausted: exhausted.clone(),
             ref_count: ref_count.clone(),
-            error_occured: error_occured.clone(),
+            error_occurred: error_occurred.clone(),
         };
 
         task::spawn(async move {
@@ -51,23 +51,23 @@ impl<E: Send + 'static> TryForEach<E> {
                 let sender = sender.clone();
                 let exhausted = exhausted.clone();
                 let ref_count = ref_count.clone();
-                let error_occured = error_occured.clone();
+                let error_occurred = error_occurred.clone();
 
                 ref_count.fetch_add(1, Ordering::SeqCst);
                 // if no error occured, we can spawn another task.
                 // but, if an error occured, break from the stream, ending the outer task
-                if error_occured.load(Ordering::SeqCst) {
+                if error_occurred.load(Ordering::SeqCst) {
                     return;
                 }
 
                 task::spawn(async move {
                     // an error may have occured by the time the runtime executes this closure
-                    if !error_occured.load(Ordering::SeqCst) {
+                    if !error_occurred.load(Ordering::SeqCst) {
                         // Execute the closure.
                         if let Err(err) = f(item).await {
                             // an error occured. We need to stop any consequent futures from starting
                             // and then send an item through the stream
-                            error_occured.store(true, Ordering::SeqCst);
+                            error_occurred.store(true, Ordering::SeqCst);
                             sender.send(Some(err)).await;
                             return;
                         }
@@ -76,7 +76,7 @@ impl<E: Send + 'static> TryForEach<E> {
                         ref_count.fetch_sub(1, Ordering::SeqCst);
                         if exhausted.load(Ordering::SeqCst) && ref_count.load(Ordering::SeqCst) == 0 {
                             // possibly, an error occured while executing this inner task. Make sure no error occured
-                            if !error_occured.load(Ordering::SeqCst) {
+                            if !error_occurred.load(Ordering::SeqCst) {
                                 // no errors occured at all, so push None through the channel
                                 sender.send(None).await;
                             }
