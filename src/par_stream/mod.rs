@@ -9,7 +9,9 @@ pub use for_each::ForEach;
 pub use map::Map;
 pub use next::NextFuture;
 pub use take::Take;
+use crate::par_stream::try_for_each::TryForEach;
 
+mod try_for_each;
 mod for_each;
 mod map;
 mod next;
@@ -61,6 +63,16 @@ pub trait ParallelStream: Sized + Send + Sync + Unpin + 'static {
         Fut: Future<Output = ()> + Send,
     {
         ForEach::new(self, f)
+    }
+
+    /// Applies `f` to each item of this stream in parallel.
+    fn try_for_each<F, Fut, E>(self, f: F) -> TryForEach<E>
+        where
+            F: FnMut(Self::Item) -> Fut + Send + Sync + Copy + 'static,
+            E: Send + 'static,
+            Fut: Future<Output = Result<(), E>> + Send,
+    {
+        TryForEach::new(self, f)
     }
 
     /// Transforms a stream into a collection.
